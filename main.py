@@ -4,8 +4,7 @@ from pathlib import Path
 
 import rumps
 
-from menubar import MenuBar
-
+from menu import Menu
 
 app_name = 'slack_status_icon'
 home = str(Path.home())
@@ -42,5 +41,5 @@ if __name__ == '__main__':
         exit(1)
 
     slack_token = settings.get('slack_token')
-    menubar = MenuBar(slack_token=slack_token)
-    menubar.run()
+    menu = Menu(slack_token=slack_token)
+    menu.run()

@@ -1,11 +1,18 @@
+import logging
 from asyncio import Future
 from typing import Union
 
 import slack
 from slack.web.slack_response import SlackResponse
 
+logger = logging.getLogger(__name__)
+
 
 class SlackWebClient(slack.WebClient):
+    """
+    Introduced non-documented methods for getting info about all channels/members in single call
+    """
+
     def client_boot(self, **kwargs) -> Union[Future, SlackResponse]:
         return self.api_call("client.boot", http_verb="GET", params=kwargs)
 
@@ -14,12 +21,16 @@ class SlackWebClient(slack.WebClient):
 
 
 class Slack:
-    def __init__(self, token):
+    def __init__(self, token: str):
         self.slack = SlackWebClient(token=token)
-        auth = self.check_auth()
-        self._boot = None
+
+        # cache heavy calls
+        self._info = None
         self._users = None
-        if auth:
+
+        self.team_id = None
+        auth = self.check_auth()
+        if not auth:
             self.team_id = auth.get('team_id')
 
     def check_auth(self):
@@ -30,129 +41,92 @@ class Slack:
         except Exception:
             return
 
-    def check_unread_private(self, fast=False):
-        if not self._boot or not fast:
-            response = self.slack.client_boot()
-            if response.get('ok'):
-                self._boot = response
-                print('client_boot ok')
-            response = self.slack.users_list()
-            if response.get('ok'):
-                self._users = response
-                print('users_list ok')
+    def _full_update(self):
+        response = self.slack.client_boot()
+        if response.get('ok'):
+            self._info = response
+            logger.info('client.boot ok')
+        response = self.slack.users_list()
+        if response.get('ok'):
+            self._users = response
+            logger.info('users.list ok')
+
+    def _count_unread_from_channel(self, channel: dict) -> int:
+        """
+        Returns counts of mentions in channel or 1 for unread mark
+        """
+        unread_mark = channel.get('has_unreads', False)
+        mentions = channel.get('mention_count', 0)
+        return max(int(unread_mark), mentions)
+
+    def _get_channel_name_by_id(self, channel_id: str) -> str:
+        known_channels = self._info.get('channels', []) + self._info.get('groups', [])
+        for ch in known_channels:
+            if ch.get('id') == channel_id:
+                return ch.get('name', channel_id)
+        return channel_id
+
+    def _is_channel_muted(self, channel_id: str) -> bool:
+        muted_channels = self._info.get('self', {}).get('prefs', {}).get('muted_channels', '').split(',')
+        return channel_id in muted_channels
+
+    def _get_username_by_im_id(self, im_id: str) -> str:
+        default_username = f'#{im_id}'
+        user_id = None
+        for im in self._info.get('ims', []):
+            if im_id == im.get('id'):
+                user_id = im.get('user')
+                break
+        for user in self._users.get('members', []):
+            if user.get('id') == user_id:
+                return user.get('real_name', default_username)
+        return default_username
+
+    def check_unread(self, full_update: bool = False):
+        if not self._info or full_update:
+            self._full_update()
+
+        unread_by_channel = []
+        total_unread_count = 0
+
         counts = self.slack.client_counts()
-
-        unread_channels = []
-        total_unread = 0
-
         if not counts.get('ok'):
-            return total_unread, unread_channels
+            logger.warning('client.counts returned non-ok')
+            return total_unread_count, unread_by_channel
 
-        threads_u = counts.get('threads', {}).get('has_unreads', False)
-        threads_m = counts.get('threads', {}).get('mention_count', 0)
-        total = max(int(threads_u), threads_m)
-        total_unread += total
+        threads = counts.get('threads', {})
+        channels = counts.get('channels', [])
+        ims = counts.get('ims', [])
+        multipeople_ims = counts.get('mpims', [])
 
-        for channel in counts.get('channels', []):
+        threads_count = self._count_unread_from_channel(threads)
+        if threads_count:
+            unread_by_channel.append(['', 'Threads', threads_count])
+            total_unread_count += threads_count
+
+        for channel in channels:
+            unread_count = self._count_unread_from_channel(channel)
             channel_id = channel.get('id')
-            unread = channel.get('has_unreads', False)
-            mentions = channel.get('mention_count', 0)
-            total = max(int(unread), mentions)
+            channel_name = self._get_channel_name_by_id(channel_id)
+            if unread_count:
+                unread_by_channel.append([channel_id, channel_name, unread_count])
+                if self._is_channel_muted(channel_id):
+                    total_unread_count += unread_count
 
-            channel_name = channel_id
-            for ch in (
-                    self._boot.get('channels',[]) + self._boot.get('groups',[])
-            ):
-                if ch.get('id') == channel_id:
-                    channel_name = ch.get('name', channel_id)
-                    break
-
-            if total:
-                unread_channels.append([channel_id, channel_name, total])
-
-            if channel_id not in self._boot.get('self', {}).get('prefs', {}).get('muted_channels', '').split(','):
-                total_unread += total
-
-        for im in counts.get('ims', []):
+        for im in ims:
+            unread_count = self._count_unread_from_channel(im)
             channel_id = im.get('id')
-            unread = im.get('has_unreads', False)
-            mentions = im.get('mention_count', 0)
-            total = max(int(unread), mentions)
+            username = self._get_username_by_im_id(channel_id)
+            if unread_count:
+                unread_by_channel.append([channel_id, username, unread_count])
+                total_unread_count += unread_count
 
-            user_id = None
-            for boot_im in self._boot.get('ims'):
-                if channel_id == boot_im.get('id'):
-                    user_id = boot_im.get('user')
-                    break
-            username = None
-            if user_id:
-                for user in self._users.get('members', []):
-                    if user.get('id') == user_id:
-                        username = user.get('real_name', user_id)
-                        break
-
-            if not username:
-                username = channel_id
-            channel_name = f'IM: {username}'
-            if total:
-                unread_channels.append([channel_id, channel_name, total])
-            total_unread += total
-
-        for mpim in counts.get('mpims', []):
+        for mpim in multipeople_ims:
+            unread_count = self._count_unread_from_channel(mpim)
             channel_id = mpim.get('id')
-            unread = mpim.get('has_unreads', False)
-            mentions = mpim.get('mention_count', 0)
-            total = max(int(unread), mentions)
-            channel_name = f'MPIM #{channel_id}'
-            if total:
-                unread_channels.append([channel_id, channel_name, total])
-            total_unread += total
+            channel_name = f'#{channel_id}'
+            if unread_count:
+                unread_by_channel.append([channel_id, channel_name, unread_count])
+                total_unread_count += unread_count
 
-        return total_unread, unread_channels
-
-    # def get_channels(self, fast):
-    #     public_channels = self.slack.channels_list().data.get('channels', [])
-    #     my_public_channels = [c for c in public_channels if c.get('is_member')]
-    #     private_channels = self.slack.groups_list().data.get('groups', [])
-    #     ims = []
-    #     group_ims = []
-    #
-    #     if not fast:
-    #         ims = self.slack.im_list().data.get('ims', [])
-    #         group_ims = self.slack.mpim_list().data.get('groups', [])
-    #
-    #     return [*my_public_channels, *private_channels, *ims, *group_ims]
-
-    # def check_unread_public(self, fast=False):
-    #     unread = []
-    #     total_count = 0
-    #     channels = self.get_channels(fast=fast)
-    #     for channel in channels:
-    #         sleep(0.2)
-    #         channel_id = channel.get('id')
-    #         channel_name = channel.get('name')
-    #         if not channel_name:
-    #             channel_name = '@' + channel.get('user')
-    #         if channel.get('is_channel'):
-    #             response = self.slack.channels_info(
-    #                 channel=channel_id
-    #             ).data.get('channel')
-    #         elif channel.get('is_group'):
-    #             response = self.slack.groups_info(
-    #                 channel=channel_id
-    #             ).data.get('group')
-    #         elif channel.get('is_im'):
-    #             response = self.slack.conversations_info(
-    #                 channel=channel_id
-    #             ).data.get('channel')
-    #         else:
-    #             response = {}
-    #         unread_count = 0
-    #         if channel_name not in BLACKLISTED_NAMES:
-    #             unread_count = response.get('unread_count_display')
-    #         if unread_count:
-    #             total_count += unread_count
-    #             unread.append([channel_id, channel_name, unread_count])
-    #
-    #     return total_count, unread
-
+        return total_unread_count, unread_by_channel
