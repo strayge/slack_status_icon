@@ -110,7 +110,7 @@ class Slack:
             channel_name = self._get_channel_name_by_id(channel_id)
             if unread_count:
                 unread_by_channel.append([channel_id, channel_name, unread_count])
-                if self._is_channel_muted(channel_id):
+                if not self._is_channel_muted(channel_id):
                     total_unread_count += unread_count
 
         for im in ims:
