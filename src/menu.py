@@ -21,23 +21,31 @@ def get_icon(count: int) -> str:
     return 'icons/slack_more.png'
 
 
+class MenuItem(rumps.MenuItem):
+    def __init__(self, *args, channel_id: str = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.channel_id = channel_id
+
+
 class Menu(rumps.App):
     def __init__(self, slack_token: str):
         super().__init__('Slack', icon=DEFAULT_ICON, quit_button=None)
         self.slack = Slack(slack_token)
         self.full_check_last = time.time()
 
-        menuitem_open = rumps.MenuItem('Open', callback=self.open_slack, key='o')
-        menuitem_open.channel_id = ''
-        menuitem_quit = rumps.MenuItem('Quit', callback=rumps.quit_application, key='q')
+        menuitem_open = MenuItem('Open', channel_id='', callback=self.open_slack, key='o')
+        menuitem_quit = MenuItem('Quit', callback=rumps.quit_application, key='q')
         self.menu_items_header = [menuitem_open]
         self.menu_items_footer = [menuitem_quit]
 
-    def open_slack(self, menuitem: rumps.MenuItem):
+    def open_slack(self, menuitem: MenuItem):
         channel_id = menuitem.channel_id
         team_id = self.slack.team_id
+
+        # don't allow escape from quoted string
         channel_id = channel_id.replace('"', '')
         team_id = team_id.replace('"', '')
+
         logger.info(f'open #{channel_id}')
         os.system(f'/usr/bin/open "slack://channel?team={team_id}&id={channel_id}"')
 
@@ -54,11 +62,11 @@ class Menu(rumps.App):
         menu = []
         for ch_id, ch_name, ch_count in unread:
             item_title = f'{ch_name} [{ch_count}]'
-            menuitem = rumps.MenuItem(
+            menuitem = MenuItem(
                 title=item_title,
                 callback=self.open_slack,
+                channel_id=ch_id,
             )
-            menuitem.channel_id = ch_id
             menu.append(menuitem)
 
         self.menu.clear()
