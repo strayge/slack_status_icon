@@ -1,12 +1,10 @@
-import py2app
 from setuptools import setup
 
 
-APP = ['main.py']
+APP = ['src/main.py']
 DATA_FILES = [
     'icons',
-    'menubar.py',
-    'slack_api.py'
+    'src',
 ]
 OPTIONS = {
     'argv_emulation': True,
@@ -17,7 +15,7 @@ OPTIONS = {
         'rumps',
         'slack',
         'aiohttp',
-        'multidict'
+        'multidict',
     ],
     'iconfile': 'icons/slack1.icns',
 }
