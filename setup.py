@@ -23,7 +23,7 @@ OPTIONS = {
 setup(
     app=APP,
     name='Slack Status Icon',
-    version='0.2.0',
+    version='0.2.1',
     data_files=DATA_FILES,
     options={'py2app': OPTIONS},
     setup_requires=['py2app'],

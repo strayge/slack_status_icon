@@ -30,7 +30,7 @@ class Slack:
 
         self.team_id = None
         auth = self.check_auth()
-        if not auth:
+        if auth:
             self.team_id = auth.get('team_id')
 
     def check_auth(self):
