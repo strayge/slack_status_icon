@@ -7,7 +7,7 @@ import rumps
 from slack_api import Slack
 
 DEFAULT_ICON = 'icons/slack.png'
-UNREAD_CHECK_INTERVAL = 30
+UNREAD_CHECK_INTERVAL = 10
 CHANNELS_LIST_UPDATE_INTERVAL = 20 * 60
 
 logger = logging.getLogger(__name__)
