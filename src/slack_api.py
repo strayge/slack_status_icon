@@ -2,6 +2,7 @@ import logging
 from asyncio import Future
 from typing import Union
 
+import requests
 import slack
 from slack.web.slack_response import SlackResponse
 
@@ -11,7 +12,27 @@ logger = logging.getLogger(__name__)
 class SlackWebClient(slack.WebClient):
     """
     Introduced non-documented methods for getting info about all channels/members in single call
+    Added ability to login with cookie
     """
+
+    def __init__(self, token=None, *args, cookie=None, **kwargs):
+        self.cookie = cookie
+        if self.cookie and not token:
+            token = self.get_token_from_cookie()
+        super().__init__(token, *args, **kwargs)
+
+    def get_token_from_cookie(self):
+        auth_url = 'https://app.slack.com/auth?app=client'
+        r = requests.get(auth_url, headers={'cookie': self.cookie})
+        if r.ok and '"token"' in r.text:
+            token = r.text.split('"token"', 1)[1].split('"', 2)[1]
+            return token
+
+    def _get_headers(self, *args):
+        headers = super()._get_headers(*args)
+        if self.cookie:
+            headers['Cookie'] = self.cookie
+        return headers
 
     def client_boot(self, **kwargs) -> Union[Future, SlackResponse]:
         return self.api_call("client.boot", http_verb="GET", params=kwargs)
@@ -21,17 +42,17 @@ class SlackWebClient(slack.WebClient):
 
 
 class Slack:
-    def __init__(self, token: str):
-        self.slack = SlackWebClient(token=token)
+    def __init__(self, token: str = None, cookie: str = None):
+        self.slack = SlackWebClient(token=token, cookie=cookie)
 
         # cache heavy calls
         self._info = None
         self._users = None
 
         self.team_id = None
-        auth = self.check_auth()
-        if auth:
-            self.team_id = auth.get('team_id')
+        self.auth = self.check_auth()
+        if self.auth:
+            self.team_id = self.auth.get('team_id')
 
     def check_auth(self):
         try:
@@ -83,6 +104,11 @@ class Slack:
         return default_username
 
     def check_unread(self, full_update: bool = False):
+        if not self.team_id:
+            logger.warning('invalid token, update skipped')
+            # invalid token provided
+            return 0, []
+
         if not self._info or full_update:
             self._full_update()
 

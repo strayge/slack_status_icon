@@ -4,21 +4,22 @@ import time
 
 import rumps
 
+from settings import (
+    APP_ICON,
+    EMPTY_ICON,
+    Settings,
+)
 from slack_api import Slack
-
-DEFAULT_ICON = 'icons/slack.png'
-UNREAD_CHECK_INTERVAL = 10
-CHANNELS_LIST_UPDATE_INTERVAL = 20 * 60
 
 logger = logging.getLogger(__name__)
 
 
 def get_icon(count: int) -> str:
     if count <= 0:
-        return DEFAULT_ICON
+        return EMPTY_ICON
     if count < 10:
-        return f'icons/slack{count}.png'
-    return 'icons/slack_more.png'
+        return os.path.join('icons', f'slack{count}.png')
+    return os.path.join('icons', 'slack_more.png')
 
 
 class MenuItem(rumps.MenuItem):
@@ -28,15 +29,31 @@ class MenuItem(rumps.MenuItem):
 
 
 class Menu(rumps.App):
-    def __init__(self, slack_token: str):
-        super().__init__('Slack', icon=DEFAULT_ICON, quit_button=None)
-        self.slack = Slack(slack_token)
-        self.full_check_last = time.time()
+    def __init__(self):
+        super().__init__('Slack', icon=EMPTY_ICON, quit_button=None)
+        self.settings = Settings()
+        self.slack = None
+        self.init_slack()
+        self.last_check = 0
+        self.last_check_channels = 0
 
         menuitem_open = MenuItem('Open', channel_id='', callback=self.open_slack, key='o')
         menuitem_quit = MenuItem('Quit', callback=rumps.quit_application, key='q')
+        menuitem_settings = MenuItem('Settings', callback=self.open_settings, key='s')
         self.menu_items_header = [menuitem_open]
-        self.menu_items_footer = [menuitem_quit]
+        self.menu_items_footer = [menuitem_settings, menuitem_quit]
+
+    def init_slack(self):
+        token = None
+        cookie = None
+        if self.settings.token.startswith('xoxs'):
+            token = self.settings.token
+        elif 'd=' in self.settings.token:
+            cookie = self.settings.token
+        self.slack = Slack(token=token, cookie=cookie)
+        if not self.slack.auth:
+            token = self.settings.token[:4] + '...' + self.settings.token[-4:]
+            self.settings.notify(f'Invalid slack token/cookie: {token}')
 
     def open_slack(self, menuitem: MenuItem):
         channel_id = menuitem.channel_id
@@ -49,14 +66,34 @@ class Menu(rumps.App):
         logger.info(f'open #{channel_id}')
         os.system(f'/usr/bin/open "slack://channel?team={team_id}&id={channel_id}"')
 
-    @rumps.timer(UNREAD_CHECK_INTERVAL)
+    def open_settings(self, menuitem: MenuItem):
+        settings_window = rumps.Window(
+            title='Slack Status Icon Settings',
+            message='Enter Slack xoxs token or browser cookie:',
+            ok='Save',
+            cancel='Cancel',
+            default_text=self.settings.token,
+            dimensions=(400, 100),
+        )
+        settings_window.icon = APP_ICON
+        settings_result = settings_window.run()
+        if settings_result.clicked:
+            self.settings.set_token(settings_result.text.strip())
+            self.init_slack()
+
+    @rumps.timer(1)
     def refresh_menu(self, _=None) -> None:
         now = time.time()
-        full = True
-        if now - self.full_check_last > CHANNELS_LIST_UPDATE_INTERVAL:
-            full = False
-        logger.info(f'checking, full={full}')
-        count, unread = self.slack.check_unread(full_update=full)
+        if now - self.last_check < self.settings.update_interval:
+            return
+        self.last_check = now
+        is_update_channels = False
+        if now - self.last_check_channels > self.settings.channels_update_interval:
+            self.last_check_channels = now
+            is_update_channels = True
+
+        logger.info(f'checking, full={is_update_channels}')
+        count, unread = self.slack.check_unread(full_update=is_update_channels)
         logger.info(f'check result: {count}')
 
         menu = []
