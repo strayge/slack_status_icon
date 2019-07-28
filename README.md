@@ -5,7 +5,7 @@ Very useful with autohidden Dock.
 
 ![screenshot](docs/screenshot_1.png)
 
-### Setup
+## Setup
 
 For start using tool in `Settings` you needed input one of:
 1) legacy slack token (starts with `xoxs-`)
@@ -13,7 +13,7 @@ For start using tool in `Settings` you needed input one of:
 ![chrome_cookie](docs/chrome_cookie.png)
 
 
-### Limitations
+## Limitations
 
 - Now app worked only with single workspace.
 - List of channels/members updates only once per 20 minutes  
